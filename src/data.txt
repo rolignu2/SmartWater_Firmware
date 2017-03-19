@@ -1,0 +1,18 @@
+//url para cloud callback
+//https://api.spark.io/v1/devices/430035001747353236343033/callback/?access_token=fa01cf3d5a044585792673eec1bd4b8bdb3bba7b
+
+//para configuracion podemos enviarla por medio de particle
+// solo llamada por el metodo POST
+//https://api.particle.io/v1/devices/430035001747353236343033/war/?access_token=fa01cf3d5a044585792673eec1bd4b8bdb3bba7b&args=hello_moto
+
+
+{
+
+   0 : {
+       name : "",
+        pin : "",
+        value : ""  
+   }
+
+
+}
