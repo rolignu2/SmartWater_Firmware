@@ -1,8 +1,10 @@
 /***
  * @SmartWater
- * @version                 1.2.0 [RC 1.2]
- * @author                  Rolando Arriaza --> rolignu90
+ * @version                 1.2.9 [RC 1.5]
+ * @author                  Rolando Arriaza/rolignu90
  * @description             Core del firmware smartwater
+ *
+ *
  * Descripcion de los servicios
  *
  *  EBASE       = envio de data al web services : se encarga de establecer la data y la logica dentro del WS
@@ -20,10 +22,13 @@
 
 
 /*****************************  SMART WATER INICIO E INSTANCIA DE LA CLASE  *******************/
+
+
+
 /***
  * @description : Esta clase fue desarrollada con el fin de hacer una ejecucion en segundo plano
  *                a pesar de que esta la de primer plano se ejecuta asincronamente.
- * @version : 1.0
+ * @version : 1.1
  * @author : Rolando Arriaza
 ***/
 class Task
@@ -58,7 +63,7 @@ class Swater : public Task , public SmartVariables
              /**
              * @description  Constructor de la clase hace referencia al void setup ()
              *               este constructor carga todas las funciones que se desean utilizar
-             * @version 1.0
+             * @version 1.3
              * @author Rolando Arriaza
             **/
             Swater() : timer(this->tick , &Swater::loop , *this) , Task() {
@@ -75,12 +80,10 @@ class Swater : public Task , public SmartVariables
                  //generacion de errores
                  Particle.variable("error" ,  error_);
 
-
-                 //tick = time = milisegundos
+                 //instancia el ultimo tick configurado en milisegundos
                  if(this->tick != ObDefault_.tick ){
                      this->tick =  ObDefault_.tick ;
                  }
-
 
             }
 
@@ -93,6 +96,9 @@ class Swater : public Task , public SmartVariables
              * @param Tstart boolean , verifica si se ejecuta el timer
             **/
             void init(boolean Tstart)   {
+
+
+                //tick = tiempo en milisegundo que se ejecutara un loop
 
 
                 //testmode se utiliza la variable callback con el resultado dentro de json_compose
@@ -157,8 +163,18 @@ class Swater : public Task , public SmartVariables
 
 
                 //instanciamos el timer dentro de init
-                 if(Tstart)
+                 if(Tstart){
+
+                    if(this->tick != ObDefault_.tick ){
+                        this->tick =  ObDefault_.tick ;
+                        set_period(this->tick);
+                    }
+
                     timer.start();
+
+                 }
+
+
 
 
                  if(activate_task)

@@ -33,6 +33,8 @@ class SmartVariables {
           return NULL;
       }
 
+      char * get_lastJson(){ return this->last_json; }
+
 
       char * parseJson(char *jsonString){
           char* value;
