@@ -41,7 +41,7 @@ class DefConfig
                                 1 ,                             // particle active
                                 0 ,                             // sleep mode
                                 2000,                           // tick
-                                "hola como estas",
+                                "holacomoestas",
                                 "hook-response/Econtrol",       //web services control
                                 "Econtrol",                     //hook control
                                 "war"                           // war data set http client

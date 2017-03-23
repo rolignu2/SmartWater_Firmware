@@ -3,7 +3,6 @@
  * @version                 1.2.0 [RC 1.2]
  * @author                  Rolando Arriaza --> rolignu90
  * @description             Core del firmware smartwater
-
  * Descripcion de los servicios
  *
  *  EBASE       = envio de data al web services : se encarga de establecer la data y la logica dentro del WS
@@ -14,8 +13,10 @@
 
 
 
-#include <SmartObject.h>
+#include <SmartObject.cpp>
 #include <ParseVariable.cpp>
+
+
 
 
 /*****************************  SMART WATER INICIO E INSTANCIA DE LA CLASE  *******************/
@@ -63,22 +64,22 @@ class Swater : public Task , public SmartVariables
             Swater() : timer(this->tick , &Swater::loop , *this) , Task() {
 
 
-                ObjSetup  setup  = this->get_PrimaryConf();
+                 //obtiene el objeto desde la EEPROM
+                 this->ObDefault_  = this->get_PrimaryConf();
 
-                //configuracion por defecto
-                ObDefault_ = DefConfig::get_DefConf();
+                 //callbacks de particle
 
-                if(setup.version  != 0){
+                 //generacion de datos en consola
+                 Particle.variable("console" , console_);
 
-                    Swater::set_PrimaryConf(ObDefault_);
-                    delay(2000);
-                }
+                 //generacion de errores
+                 Particle.variable("error" ,  error_);
 
 
-                if(this->tick != ObDefault_.tick )
-                {
+                 //tick = time = milisegundos
+                 if(this->tick != ObDefault_.tick ){
                      this->tick =  ObDefault_.tick ;
-                }
+                 }
 
 
             }
@@ -103,11 +104,14 @@ class Swater : public Task , public SmartVariables
                 //regresa la configuraciond e memoria a modo default
                 if(default_mode)
                 {
-                    set_PrimaryConf(ObDefault_);
+
+                    ObjSetup o = DefConfig::get_DefConf();
+                    this->ObDefault_ = o ;
                 }
 
 
-                 ObjSetup  setup  = this->get_PrimaryConf();
+                ObjSetup setup = this->ObDefault_;
+
 
                 //nombre del webhook donde esta alojado el WS
                  web_service = String(setup.webservices);
@@ -269,6 +273,15 @@ class Swater : public Task , public SmartVariables
 
 
 
+            char* ConvertoChar(String str){
+
+                int str_len = str.length() + 1;
+                char char_array[str_len];
+                str.toCharArray(char_array, str_len);
+
+                return char_array;
+
+            }
 
            /**
              * @description clase de la tarea asincrona
@@ -340,7 +353,12 @@ class Swater : public Task , public SmartVariables
             void ExecuteHook(String process) {  Particle.publish(web_base, process, PRIVATE);  }
 
 
-            //Split function command
+             /**
+             * @description  obtiene la cadena de comando segun su indexado
+             * @example  PARTICLE;START -->  "COMMANDO"  ";" "VALOR"
+             * @version 1.1
+             * @author Rolando Arriaza
+            **/
             String SplitCommand(String data, char separator, int index)
             {
                 int found = 0;
@@ -357,6 +375,15 @@ class Swater : public Task , public SmartVariables
 
                 return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
             }
+
+
+            char* string2char(String command){
+                if(command.length()!=0){
+                    char *p = const_cast<char*>(command.c_str());
+                    return p;
+                }
+            }
+
 
 
     private:
@@ -404,6 +431,12 @@ class Swater : public Task , public SmartVariables
 
          //compositor de json
          char  json_compose[700];
+
+         //compositor de consola
+         char  console_[700];
+
+         //compositor de errores
+         char  error_[700];
 
 
          //bufer estatico json
@@ -518,22 +551,33 @@ int Swater::FirmStatus()
 ***/
 int Swater::set_config(String command){
 
+
+
+
+   sprintf(console_, " %s%s%s" , "[CONSOLE : SE EJECUTO EL COMANDO EN set_config(command)  " , ConvertoChar(command) , "]");
+
+
+   //ConfJson
    //sobre escritura de la memoria eeprom
    bool ovewrite = false;
 
    //patron asignado al momento de hacer el split
    char pattern = ';';
 
+
    //comandos a analizar
    String cmd   = SplitCommand(command , pattern , 0);
    String exec  = SplitCommand(command , pattern ,  1);
 
+
+   //objeto ...
    ObjSetup object = ObDefault_;
 
    //si el comando devuelve nada o vacio entonces generar un error
    if(cmd == "")
    {
-       this->ExecuteErrorHandle ( String("[Error, El comando : " +  command +  " no se parametrizo de forma correcta [devuelve nulo] , Error Critico "));
+       sprintf(error_, " %s%s%s" , "[Error, El comando : " , ConvertoChar(command) , " En set_config(command) ]");
+       //ExecuteErrorHandle ( String("[Error, El comando : " +  command +  " no se parametrizo de forma correcta [devuelve nulo] , Error Critico "));
        return -1;
    }
 
@@ -545,6 +589,9 @@ int Swater::set_config(String command){
              Particle.connect();
              return 1;
       }
+      else if(exec == "ACTIVATE" && Particle.connected() ){
+           return 1;
+      }
       else if(exec == "RESET" ){
            System.reset();
            return 1;
@@ -554,6 +601,9 @@ int Swater::set_config(String command){
           return 1;
       }
 
+
+      return -1;
+
    }
    else if(cmd == "VARIABLES")
    {
@@ -561,8 +611,59 @@ int Swater::set_config(String command){
        ovewrite = true;
        ObDefault_ = object;
    }
+   else if(cmd == "VERSION"){
+       object.version = atoi(exec.c_str());
+       ovewrite = true;
+       ObDefault_ = object;
+   }
+   else if (cmd == "JSON_CONFIG"){
 
-      //se activo la sobre escitura
+       char * _execute = (char*) exec.c_str();
+
+       char* _version       =  this->ConfJson( _execute  ,"version");
+       char* _vars          =  this->ConfJson( _execute , "variables");
+       char* _wbase         =  this->ConfJson( _execute , "web_base");
+       char* _wservices     =  this->ConfJson( _execute , "webservices");
+       char* _activate      =  this->ConfJson( _execute , "activate");
+       char* _sleep         =  this->ConfJson( _execute , "sleep");
+       char* _tick          =  this->ConfJson( _execute , "tick");
+       char* _war           =  this->ConfJson( _execute , "war");
+
+
+       if(_version != NULL){
+            object.version = atoi(_version);
+       }
+       if(_vars != NULL && _vars != ""){
+           strcpy(object.variables, _vars);
+       }
+       if(_wbase  != NULL && _wbase != ""){
+           strcpy(object.web_base, _wbase);
+       }
+       if(_wservices != NULL && _wservices != ""){
+            strcpy(object.webservices, _wservices);
+       }
+       if(_activate != NULL ){
+           object.activate = atoi(_activate);
+       }
+       if(_sleep != NULL){
+          object.sleep = atoi(_sleep);
+       }
+       if(_tick != NULL && atoi(_tick) > 100 ){
+          object.tick = atoi(_tick);
+       }
+       if(_war != NULL && _war != ""){
+          strcpy(object.war, _war);
+       }
+
+
+       ovewrite = true;
+       ObDefault_ = object;
+
+       sprintf(json_compose, "%s" ,  _version);
+
+   }
+
+      //se activo la sobre escritura
       if(ovewrite){
           this->set_PrimaryConf(object);
           this->init(false);
@@ -621,37 +722,20 @@ void Swater::loop(void){
 String Swater::get_process()
 {
 
-  char jsonString[] = "{\"query\":{\"count\":1,\"created\":\"2012-08-04T14:46:03Z\",\"lang\":\"en-US\",\"results\":{\"item\":{\"title\":\"valida de verga\"}}}}";
+ // char jsonString[] = "{\"query\":{\"count\":1,\"created\":\"2012-08-04T14:46:03Z\",\"lang\":\"en-US\",\"results\":{\"item\":{\"title\":\"valida de verga\"}}}}";
 
 
-  //char* value = this->parseJson(jsonString);
 
+    ObjSetup o = this->ObDefault_ ;
+   // String s = o.webservices;
 
-   // return root;
-   //return String(value);
-  // return String(jsonString);
+    //return s;
 
-    //ObjSetup o = this->get_PrimaryConf();
+   // return s;
 
-    //return String(o.variables);
-    ObjSetup o = ObDefault_ ;
-    //char data[650];
-    //strcpy( data, (const char*)o.variables);
+   // return String( o.variables[2]  ) ;
 
-    String data = "";
-    /*const char * values = (const char *) o.variables;
-    for(int i = 0 ; i < sizeof(values) ; i++){
-        data += String(values[i]);
-    }*/
-    for(int i = 0 ; i < sizeof(o.variables)-1 ; i++){
-      if(o.variables[i] != '\0' )
-          data += String(o.variables[i]);
-      else
-          break;
-    }
-
-
-    return String( data);
+   return String(o.version );
 
  }
 
@@ -660,8 +744,9 @@ String Swater::get_process()
 Swater smartwater;
 
 void setup(){
-    smartwater.set_period(50*100);
+    smartwater.set_period(50*1000);
    // smartwater.start_task(true);
     smartwater.start_testMode(true);
+    //smartwater.start_defaultMode(true );
     smartwater.init(true) ;
 }
