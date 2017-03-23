@@ -15,8 +15,10 @@
 
 
 
+
 #include <SmartObject.cpp>
 #include <ParseVariable.cpp>
+
 
 
 
@@ -79,6 +81,12 @@ class Swater : public Task , public SmartVariables
 
                  //generacion de errores
                  Particle.variable("error" ,  error_);
+                 
+                 
+                 //
+                 Particle.function("EMER", &Swater::emergencyConfig , this);
+                 
+                 
 
                  //instancia el ultimo tick configurado en milisegundos
                  if(this->tick != ObDefault_.tick ){
@@ -286,6 +294,14 @@ class Swater : public Task , public SmartVariables
              * @author Rolando Arriaza
             **/
             int set_config(String command);
+            
+            
+              /**
+             * @description establece la configuracion de emergencia 
+             * @version 1.0
+             * @author Rolando Arriaza
+            **/
+            int emergencyConfig(String command);
 
 
 
@@ -399,8 +415,8 @@ class Swater : public Task , public SmartVariables
                     return p;
                 }
             }
-
-
+            
+            
 
     private:
 
@@ -453,11 +469,6 @@ class Swater : public Task , public SmartVariables
 
          //compositor de errores
          char  error_[700];
-
-
-         //bufer estatico json
-        // StaticJsonBuffer<600>      jsonBuffer;
-
 
 
          //test mode
@@ -558,6 +569,33 @@ int Swater::FirmStatus()
 
 
 
+/**
+ * @author Rolando Arriaza 
+ * @version 1.0
+ * @description Configuracion de emergencia 1 --> eemprom por defecto , 0 --> nada
+***/
+int Swater::emergencyConfig(String command){
+    
+
+    int _execute = atoi(command.c_str());
+
+    switch(_execute){
+            
+            case 0 : 
+               return 0;
+            case 1:
+                 ObjSetup o = DefConfig::get_DefConf();
+                 this->set_PrimaryConf(o);
+                 this->init(false);
+                 this->set_period(o.tick);
+                break;
+            
+    }
+       
+    return 1;
+}
+
+
 
 /***
  * algoritmo de configuracion al momento que se ejecuta el WAR
@@ -566,8 +604,6 @@ int Swater::FirmStatus()
  * se busca el comando y se ejecuta la funcion asociada
 ***/
 int Swater::set_config(String command){
-
-
 
 
    sprintf(console_, " %s%s%s" , "[CONSOLE : SE EJECUTO EL COMANDO EN set_config(command)  " , ConvertoChar(command) , "]");
@@ -633,8 +669,12 @@ int Swater::set_config(String command){
        ObDefault_ = object;
    }
    else if (cmd == "JSON_CONFIG"){
+       
+     
 
        char * _execute = (char*) exec.c_str();
+       
+        
 
        char* _version       =  this->ConfJson( _execute  ,"version");
        char* _vars          =  this->ConfJson( _execute , "variables");
@@ -645,6 +685,8 @@ int Swater::set_config(String command){
        char* _tick          =  this->ConfJson( _execute , "tick");
        char* _war           =  this->ConfJson( _execute , "war");
 
+        
+       sprintf(json_compose, " %s%s%s" , _wbase );
 
        if(_version != NULL){
             object.version = atoi(_version);
@@ -666,17 +708,21 @@ int Swater::set_config(String command){
        }
        if(_tick != NULL && atoi(_tick) > 100 ){
           object.tick = atoi(_tick);
+          this->set_period(object.tick);
        }
        if(_war != NULL && _war != ""){
           strcpy(object.war, _war);
        }
+      
 
-
-       ovewrite = true;
+       //ovewrite = true;
        ObDefault_ = object;
 
-       sprintf(json_compose, "%s" ,  _version);
+     
 
+   }
+   else if("CONF_RESET"){
+        this->emergencyConfig(exec);
    }
 
       //se activo la sobre escritura
