@@ -1,7 +1,7 @@
 /***
  * @SmartWater
- * @version                 1.2.9 [RC 1.5]
- * @author                  Rolando Arriaza/rolignu90
+ * @version                 1.4.0 [RC 1.5.1]
+ * @author                  Rolando Arriaza/rolignu90 (senior backend - frontend software desing )
  * @description             Core del firmware smartwater
  *
  *
@@ -11,12 +11,84 @@
  *  AERROR      = envio de errores de parte del dispositivo al webservices
  *  ECONTROL    = Gestor de control del dispositivos , en el cual se ve estados en tiempo real
  *  WAR         = de parte del cliente o HTTP envia comandos de configuracion
+ *
+ *
 ****/
 
 
 
+/**
+ *
+ * Nota : las funciones particle se limitan a envio de datos maximo 63 caracteres :S
+ *
+ * CONFIG STRING : --->  JCONF;{"version":"1","webservices":"hook-response/Ebase","web_base":"Ebase","variables":"{}","activate":"1","sleep":"0","tick":"60000","war":"war"}
+
+   Ejemplo de envio de variables :
+
+   VAR;{"n":"var0","p":"0","t":"A","f":"D","a":"f","v":"0"}
+
+
+   EJECUCIONES EN EL WAR :
+
+        TEST_VAR;{name}    --- verifica si una variable esta cargada en el sistema
+
+        FORCE_VAR;{null}   --- el sistema volvera a cargar las variables o forzara ha hacerlo
+
+        PARTICLE;{funtion}
+
+		        ACTIVATE  --- VERIFICA SI EL PHOTON ESTA CONECTADO
+		        RESET     --- ENVIA UNA SEÑAL DE RESET AL PHOTON
+		        SAFE_MODE --- ENTRA EN MODO SEGURO
+
+
+        VAR;{json}                  -- CONFIGURA UNA NUEVA VARIABLE EN FORMATO JSON TANTO COMO EN LA EEPROM Y EN EL OBJETO
+
+                Ejemplo : VAR;{"n":"var0","p":"0","t":"A","f":"D","a":"f"}
+
+                        n       = nombre
+                        p       = pin
+                        t       = tipo
+                        f       = formato
+                        a       = activo
+
+
+        VERSION;null                --- verifica en que version esta el algoritmo
+
+        JCONF; {JSON} (DEPRECADO )  --- AGREGA CONFIGURACIONES EN JSON , SE DEPRECO POR FALTA DE MEMORIA
+
+                    --tomar en cuenta que en si no esta del todo deprecada sus funcionamiento es limitado nada mas
+
+                      {
+                            "version":"1",
+                            "webservices":"hook-response/Ebase",
+                            "web_base":"Ebase",
+                            "variables":"{}",
+                            "activate":"1",
+                            "sleep":"0",
+                            "tick":"60000",
+                            "war":"war"
+                        }
+
+                    --se puede realizar una mejora de funcionalidad pero queda a critero futuro
+
+        CONF_RESET;null             --- RESTABLECE LA CONFIGURACION POR DEFECTO
+
+        VAR_VIRTUAL;null            ---VERIFICA SI EL OBJETO VIRTUAL ESTA CARGADO EN MEMORIA
+
+        VAR_CONF;null               --- VERIFICA SI EL OBJETO DE CONFIGURACION O OBJSETUP NO ESTA VACIO
+
+        DELETE_VAR;{name}           --- ELIMINA UNA VARIABLE POR MEDIO DE SU NOMBRE
+
+                EJEMPLO : DELETE_VAR;var9  -- donde var9 es el nombre asignado
+ *
+ *
+***/
+
+
 #include <SmartObject.cpp>
 #include <ParseVariable.cpp>
+//#include <QueueArray.h>
+//#include <queue>
 
 
 
@@ -36,7 +108,9 @@ class Task
     public :
 
 
-              Task() :  timer(this->tick , &Task::task_process , *this) {}
+              Task() :  timer(this->tick , &Task::task_process , *this) {
+                   //this->parent = s;
+              }
                ~Task() { this->task_stop(); }
                void task_process(void);
                void task_start()  { timer.start();  }
@@ -46,6 +120,7 @@ class Task
                    timer.changePeriod(this->tick);
                }
                void reset_task() { timer.reset();   }
+
 
     private:
              int tick       = 10000;
@@ -72,6 +147,7 @@ class Swater : public Task , public SmartVariables
                  //obtiene el objeto desde la EEPROM
                  this->ObDefault_  = this->get_PrimaryConf();
 
+
                  //callbacks de particle
 
                  //generacion de datos en consola
@@ -80,10 +156,27 @@ class Swater : public Task , public SmartVariables
                  //generacion de errores
                  Particle.variable("error" ,  error_);
 
+
+                 //funcion de emergencia por si algo sale mal en la configuracion
+                 //o en otras instancias..
+                 Particle.function("EMER", &Swater::emergencyConfig , this);
+
+                 //funcion de prueba , en cual ahi hay fragmentos de codigos
+                 //de tipo relativo , y con respuestas varias
+                 Particle.function("TESTING" , &Swater::TestFunction , this);
+
+
                  //instancia el ultimo tick configurado en milisegundos
                  if(this->tick != ObDefault_.tick ){
                      this->tick =  ObDefault_.tick ;
                  }
+
+
+                 //funcion que a object var le da una localidad de memoria
+                 this->TruncateVariables();
+
+                 //obtiene el id del dispositivo
+                 this->deviceId = System.deviceID();
 
             }
 
@@ -158,8 +251,18 @@ class Swater : public Task , public SmartVariables
 
                  //verifica el status del firmware ...
                  this->FirmStatus();
-                 //llamada de wg
-                // watch_dog = new ApplicationWatchdog(60000 , System.reset );
+
+
+                 //verificamos si inicializa las variables
+                 //en dado caso nos devuelve falso la condicion
+                 //booleana que detectara en el ciclo se coloca como falso
+                 this->InitVariables(true);
+                 if(!this->InitVariables(false) )
+                 {
+                    //verifica si se ejecuto una variable en dado caso se halla ejecutado entonces
+                    //no hay necesidad de volver a ejecutar en la instancia del loop
+                    this->ExecVar = false;
+                 }
 
 
                 //instanciamos el timer dentro de init
@@ -175,13 +278,10 @@ class Swater : public Task , public SmartVariables
                  }
 
 
-
-
                  if(activate_task)
                     this->task_start();
 
-                // if(this->activate_task)
-                 //   task.start();
+
 
             }
 
@@ -288,23 +388,180 @@ class Swater : public Task , public SmartVariables
             int set_config(String command);
 
 
-
-            char* ConvertoChar(String str){
-
-                int str_len = str.length() + 1;
-                char char_array[str_len];
-                str.toCharArray(char_array, str_len);
-
-                return char_array;
-
-            }
-
-           /**
-             * @description clase de la tarea asincrona
+              /**
+             * @description establece la configuracion de emergencia
              * @version 1.0
              * @author Rolando Arriaza
             **/
+            int emergencyConfig(String command);
+
+
+          /**
+             * @description establece la configuracion de emergencia
+             * @version 1.0
+             * @author Rolando Arriaza
+            **/
+            int TestFunction(String command);
+
+
+
+           /**
+             * @description clase de la tarea asincrona
+             * @version 1.5
+             * @author Rolando Arriaza
+            **/
            // Task task;
+
+
+           bool ProgramConf(char * new_data ){
+
+
+
+                //obtenemos la configuracion primaria
+                 ObjSetup o = this->get_PrimaryConf();
+
+
+                 //variables de tipo O
+                // String vars =  o.variables;
+                char * vars = NULL;
+                vars        = o.variables;
+
+
+                if(vars == NULL || vars == "" || o.variables == '\0'){
+                        strcpy(o.variables , new_data);
+                }
+                else{
+
+                        char* pivot          = this->SubVarC( new_data , o.variables );
+                        sprintf(console_ , "%s" , pivot );
+                        strcpy(o.variables , pivot);
+                }
+
+
+                 //log de ovariable para pruebas
+                 //sprintf(error_ , "%s" , strlen(o.variables) );
+
+                 this->ObDefault_ = o ;
+                //mandamos a guardar la configuracion luego de la actuacion cola
+                 set_PrimaryConf(o);
+
+
+                 //Log de consola para pruebas
+                 //sprintf(console_ , "%s %s" , "Proceso [Ok] " , new_data);
+
+
+                return true ;
+           }
+
+
+          /**
+           * @Author Rolando Arriaza
+           * @version 1.9
+           * @params char* cola de datos
+           * @params char * variables disponibles
+           * @mejoras :
+           *
+           *            -- mayor velocidad en las secuencia de datos
+           *            -- mayor fiabilidad usando strtok_r
+           *            -- se creo un espacio en memoria en la variable result
+          ****/
+
+          char * SubVarC(char * queue, char variables[]  ){
+
+                char * result;  										  //declaramos la variable de resultado
+
+
+                int len = 6666;										     //agregamos la cantidad de memoria que puede utilizar esa variable
+				result = (char*) malloc((len + 1) * sizeof(char));      //creamos la memoria volatil
+				memset(result , 0 , len);                              // agregamos ceros "0" a la localidad creada
+
+
+                //patron
+                char * pattern    = " ;";
+
+                //variable de la cadena de contencion
+				char * str;
+
+
+                //variable de prueba .. sustituir por JSON result
+                char * q_index = this->ConfJson(queue , "n");
+
+
+
+                //el algoritmo debe de cumplir con siertas condiciones para llegar a un estado natural
+                //en dado caso no cumpla ese estado es alterado por el nuevo parametro
+                bool q_exist 		= false;
+
+                //verificamos iteracion de datos por iteracion
+                while (str  = strtok_r(variables, pattern, &variables)){
+
+                	char *v_name      = this->ConfJson(str , "n");
+
+					//primera comparacion de datos , verificar si la cola es igual al primer valor de la iteracion
+                	if(strcmp(q_index,v_name) == 0){
+
+                		/**
+                		   Si es igual se verifica si el resultado esta vacio o ceros
+                		   si en dado caso esta vacio se copia en memoria en dado caso no
+                		   esta vacio se concatena los datos
+						**/
+
+						if(result[0] == '\0'){
+                			strcpy(result , queue);
+						}
+						else{
+							strcat(result , ";");
+							strcat(result , queue);
+						}
+
+						/**
+						   si existe en la cola y se remplaza entonces
+						   la condicion existente sera cierta en cualquiera de las
+						   demas iteraciones
+						***/
+						q_exist 		= true;
+
+					}
+					else {
+
+						// en dado caso no aparezca entonces se agrega el valor actual de la variable
+					   	if(result[0] == '\0'){
+                			strcpy(result , str);
+						}
+						else{
+							strcat(result , ";");
+							strcat(result , str);
+						}
+
+					}
+
+
+
+				}
+
+				//si no existio un reemplazo entonces se agrega el valor
+				//que se desea guardar al final de la cola
+				if( !q_exist ){
+
+					   	if(result[0] == '\0'){
+                			strcpy(result , queue);
+						}
+						else{
+							strcat(result , ";");
+							strcat(result , queue);
+						}
+
+				}
+
+
+                return  result;
+
+        }
+
+
+
+
+
 
 
 
@@ -323,18 +580,20 @@ class Swater : public Task , public SmartVariables
                 int size = (EEPROM.length() - 1);
                 if(size > 2000)
                 {
+                    //EEPROM.clear();
+                    //delay(1500);
                     EEPROM.put(this->addr_  , o);
-
+                    delay(2000);
+                    return 1;
                 }
                 else
                 {
-                    String s = String("[Error, Memoria EEPROM insuficiente para ejecutar la configuracion , Error Critico ");
-                    this->ExecuteErrorHandle (s);
+                    sprintf(error_ , "%s" , "Error al Escribir la memoria EEPROM");
                     return 0;
                 }
 
 
-                return 1;
+                return -1;
             }
 
 
@@ -352,6 +611,7 @@ class Swater : public Task , public SmartVariables
                  if(size > 2000)
                     EEPROM.get(this->addr_ , o);
 
+
                  return o;
 
             }
@@ -364,9 +624,6 @@ class Swater : public Task , public SmartVariables
             **/
             void start_task(boolean t) { activate_task = t; }
 
-
-            //web hook execute
-            void ExecuteHook(String process) {  Particle.publish(web_base, process, PRIVATE);  }
 
 
              /**
@@ -393,6 +650,7 @@ class Swater : public Task , public SmartVariables
             }
 
 
+
             char* string2char(String command){
                 if(command.length()!=0){
                     char *p = const_cast<char*>(command.c_str());
@@ -402,14 +660,451 @@ class Swater : public Task , public SmartVariables
 
 
 
+            char* ConvertoChar(String str){
+
+                int str_len = str.length() + 1;
+                char char_array[str_len];
+                str.toCharArray(char_array, str_len);
+
+                return char_array;
+
+            }
+
+
+            bool creatVariables(char * name , char * pin , char* type , char * format , char * active , char * value ){
+
+
+				 int index  = this->TestVar(name , true  );
+
+				 if(index > -1 ){
+
+					 //Esta variable ya esta configurada dentro del objeto varOBJ
+					 // vamos a sobre escribir sus propiedades
+
+					 this->PutVariables(name,pin,type,format,active,index,value);
+
+				 }
+				 else {
+
+					  //en dado caso no exista entonces obtenemos el index var
+					  this->PutVariables(name,pin,type,format,active,this->IndexVar,value);
+					  this->IndexVar++;
+				 }
+
+                 return true;
+
+
+            }
+
+
+			int TestVar( const char * name , bool index  ){
+
+
+				/**	FUNCION COMANDO PARA VERIFICAR SI LA
+					VARIABLE X ESTA BIEN CONFIGURADA DENTRO DE LA COLA
+				***/
+
+				int size = sizeof(this->varObj)/sizeof(*this->varObj);
+
+				//si el nombre de la variable se encuentra integrada dentro del ciclo
+				//entonce devolvera 1 = true
+
+				if(index == true  ){
+
+					for(int i = 0 ; i < size ; i++){
+						if(strcmp(this->varObj[i].name , name ) == 0){
+								return i;
+						}
+					}
+
+					return -1;
+
+				}
+				else {
+
+					for(int i = 0 ; i < size ; i++){
+						if(strcmp(this->varObj[i].name , name ) == 0){
+								return 1;
+						}
+					}
+
+					return 0;
+				}
+
+
+			}
+
+			void PutVariables(char * name , char * pin , char* type , char * format ,char * active , int index , char* value ){
+
+              //VAR;{"n":"var0","p":"0","t":"A","f":"D","a":"f"}
+
+              int pin_ = -1;
+              varObj[index].name = name;
+
+
+              if(pin == "null")
+                varObj[index].pin = -1;
+              else
+                varObj[index].pin = atoi(pin);
+
+
+			  if(value == "null" )
+				  varObj[index].value = 0 ;
+			  else
+				  varObj[index].value = atoi(value);
+
+
+              if(strcmp(active , "t") == 0)
+                    varObj[index].active = true;
+              else
+                    varObj[index].active = false;
+
+               /*
+                    Nota:
+
+                       existe un comportamiento extraño al momento de
+                       colocar de varObj[index].type = type;
+                       al parecer genera caracteres extraños.
+
+                       aclaro use la solucion mas simple ya que no tengo tiempo
+                       de analizar el error asi que una mente menos ocupada podria solucionarlo
+
+               **/
+
+               if(strcmp(type, "AI") == 0){  //analogo de entrada
+                     varObj[index].type = "AI";
+                     pin_ =  this->convertPIN( varObj[index].pin , 1);
+                     pinMode( pin_ , INPUT);
+                     varObj[index].isconfig = true;
+               }
+               else if(strcmp(type, "AO") == 0){ //analogo de salida
+                    varObj[index].type = "AO";
+                    pin_ = this->convertPIN( varObj[index].pin , 0);
+                    pinMode( pin_  , OUTPUT);
+                    analogWrite( pin_ , 0);
+               }
+               else if(strcmp(type, "DI") == 0  ){ // digital entrada
+                    varObj[index].type = "DI";
+                    pin_ = this->convertPIN( varObj[index].pin , 2);
+                    pinMode(pin_ , INPUT);
+               }
+               else if(strcmp(type, "DO") == 0){ //digital de salida
+                    varObj[index].type = "DO";
+                    pin_ = this->convertPIN( varObj[index].pin , 2);
+                    pinMode( pin_  , OUTPUT);
+                    digitalWrite( pin_ , 0);
+               }
+
+
+
+
+
+               if(format == "I")
+                    varObj[index].format = "int";
+               else if(format == "D")
+                    varObj[index].format = "double";
+               else if(format == "S")
+                    varObj[index].format = "string";
+
+
+               varObj[index].test = "P";
+
+
+         }
+
+            bool DeleteVariable(const char* name ){
+
+                 bool success = true;
+
+                 // primer paso para eliminacion de una variable
+                 // eliminar esa variable dentro del objeto
+                 // la parte chiche de eliminar xD
+                 /*int size       =  sizeof(varObj)/sizeof(*varObj);
+                 int i          = 0;
+                 for(i  ;  i < size ; i++){
+                     if(strcmp(varObj[i].name , name) == 0){
+                            //liberamos el objeto
+                            varObj[i].name       = NULL;
+		                    varObj[i].type       = NULL;
+		                    varObj[i].format     = NULL;
+		                    varObj[i].test       = NULL;
+		                    varObj[i].isconfig   = false ;
+
+		                    break;
+                     }
+
+                 }*/
+
+
+                 // viene lo yuca , eliminarlo de la EEPROM :S
+                 // esta parte hay que ser cuidadoso ya que se leera el objeto mencion de la eeprom
+
+                 ObjSetup object = this->ObDefault_;
+
+
+                 //por seguridad se leera antes el objeto verificando que existe la cadena
+                 if(object.variables == NULL
+                        || object.variables == '\0'
+                        || object.variables[0] == '\0')
+                    return false;
+
+
+                 //creamos las variables necesarias para la manipulacion de la data
+                 char * str;
+                 char * _name           = NULL;
+                 char * variables       = NULL;
+                 char * result          = NULL;
+
+
+                 int len                = 6666;
+                 result                 = (char*) malloc((len + 1) * sizeof(char));
+
+                 memset(result , 0 , len);
+
+
+                 variables              = (char*) malloc(( strlen(object.variables) + 1) * sizeof(char));
+                 //new_vars               = (char*) malloc(( strlen(object.variables) + 1) * sizeof(char));
+
+                 //copiamos el object.variables a variables
+                 strcpy(variables, object.variables);
+
+                  while( str =  strtok_r(variables , " ;" , &variables )){
+
+                       //obtenemos el nombre :D
+                       _name         =  this->ConfJson(str , "n");
+
+                       if(strcmp(_name , name ) != 0){
+
+                           if(result [0] == '\0' ){
+                               sprintf(error_ , "%s" , name );
+                			    strcpy(result , str);
+						    }
+						    else{
+						    	strcat(result , ";");
+							    strcat(result , str);
+						    }
+                       }
+
+                  }
+
+                  sprintf(console_ , "%s" , result );
+                  strcpy(object.variables , result);
+
+                  this->ObDefault_ = object;
+                  set_PrimaryConf(object);
+
+
+                  free(_name);
+                  free(variables);
+
+				  //reiniciamos las variables tipo objeto
+				  this->InitVariables(true);
+
+
+                 return success;
+
+             }
+
+
+             void TruncateVariables(){
+
+			   //IndexVar se resetea ya que las variables mueren
+			   this->IndexVar = 0 ;
+
+				// obtenemos el tamaño del objeto , generalmente es 15
+               int size       =  sizeof(varObj)/sizeof(*varObj);
+
+               for(int i = 0 ; i < size ; i++ ){
+		           varObj[i].name       = NULL;
+		           varObj[i].type       = NULL;
+		           varObj[i].format     = NULL;
+		           varObj[i].test       = NULL;
+		           varObj[i].value      = 0;
+		           varObj[i].isconfig   = false;
+	           }
+
+			   //matamos todas las variables o reiniciamos
+
+             }
+
+
+
+
+
     private:
 
 
 
         /***************VARIABLES O CONSTANTES PRIVADAS **********/
 
-        //ejecucion de watchdog
-        // ApplicationWatchdog * watch_dog ;
+        /**estructura para la creacion de variables**/
+         VarObject varObj[15];
+
+
+		 int  IndexVar = 0 ;
+
+         bool ExecVar;
+
+         int convertPIN(int pin , int type ){
+
+
+             // type = 0 analogo salida
+             // type = 1 analogo de entrada
+             // type = 2 digital  I/O
+
+
+             if(type == 2 ){
+
+            switch(pin){
+                 case 0 :
+                    return D0;
+                 case 1:
+                   return  D1;
+                 case 2 :
+                    return D2;
+                 case 3:
+                    return D3;
+                 case 4 :
+                    return D4;
+                 case 5 :
+                    return D5;
+                 case 6 :
+                    return D6;
+                 case 7 :
+                    return D7;
+                }
+
+             }
+             else if(type == 0){
+
+                 switch(pin){
+                     case 0:
+                        return D0;
+                     case 1 :
+                        return D1;
+                     case 2 :
+                        return D2;
+                     case 3 :
+                        return D3;
+                      case 4:
+                        return A4;
+                     case 5 :
+                        return A5;
+                     case 6 :
+                        return A6;
+                     case 7 :
+                        return A7;
+                }
+
+             }
+             else if(type == 1){
+
+                 switch(pin){
+                     case 0 :
+                        return A0;
+                     case 1:
+                        return A1;
+                     case 2:
+                        return A2;
+                     case 3:
+                        return A3;
+                     case 4:
+                        return A4;
+                     case 5 :
+                        return A5;
+                     case 6 :
+                        return A6;
+                     case 7 :
+                        return A7;
+                 }
+
+             }
+
+
+
+         }
+
+
+         bool InitVariables (bool check ){
+
+             ObjSetup object = this->ObDefault_;
+
+             //si no existe configuracion entonces retorna un valor falso
+             if(object.variables == NULL
+                        || object.variables == '\0'
+                        || object.variables[0] == '\0')
+                    return false;
+             else {
+                if(check)
+                    if(this->ExecVar )
+                        return true ;
+             }
+
+
+             char * variables;
+             char * str;
+             bool err_flag  = false;
+             char * _name   = NULL;
+             char * _pin    = NULL;
+             char * _type   = NULL;
+             char * _format = NULL;
+             char * _active = NULL;
+			 char * _value  = NULL;
+
+             variables = (char*) malloc(( strlen(object.variables) + 1) * sizeof(char));
+             strcpy(variables, object.variables);
+
+             while( str =  strtok_r(variables , " ;" , &variables )){
+
+
+
+                    _name         =  this->ConfJson(str , "n");
+                    _pin          = this->ConfJson(str , "p");
+                    _type         = this->ConfJson(str , "t");
+                    _format       = this->ConfJson(str , "f");
+                    _active       = this->ConfJson(str , "a");
+					_value		  = this->ConfJson(str, "v");
+
+
+                    bool ok = this->creatVariables(_name, _pin , _type , _format , _active , _value );
+
+                    if(!ok){ err_flag = true; break; }
+
+
+             }
+
+             free(variables);
+             free(str);
+             free(_name);
+             free(_pin);
+             free(_type);
+             free(_format);
+             free(_active);
+			 free(_value);
+
+
+
+             if(err_flag) return false;
+             this->ExecVar = true;
+
+             return true;
+
+         }
+
+
+
+         /**
+         * variable que al momento de hacer llamada por el war se agregara la
+         * data en la cola y creara un back-to-back que actuara en un tiempo T
+         * determinado a agregar lo snuevos cambios de variables a la lista
+         * de la eeprom
+        **/
+        // QueueArray <char*> Qvar;
+
+
+        //id del dispositivo
+        String deviceId ;
+
 
          // nombre del hook
          String  web_service;
@@ -455,11 +1150,6 @@ class Swater : public Task , public SmartVariables
          char  error_[700];
 
 
-         //bufer estatico json
-        // StaticJsonBuffer<600>      jsonBuffer;
-
-
-
          //test mode
          boolean test_mode                  = false;
 
@@ -502,11 +1192,16 @@ class Swater : public Task , public SmartVariables
          }
 
 
-         //web hook error execute
-         void ExecuteErrorHandle(String error) { Particle.publish(web_base_error, error, PRIVATE);  }
+        //web hook error execute
+        void ExecuteErrorHandle(String error) { Particle.publish(web_base_error, error, PRIVATE);  }
 
 
 
+         //web hook execute
+        void ExecuteHook(String process) {
+
+            Particle.publish(web_base, process, PRIVATE);
+        }
 
 
     protected:
@@ -558,6 +1253,39 @@ int Swater::FirmStatus()
 
 
 
+/**
+ * @author Rolando Arriaza
+ * @version 1.0
+ * @description Configuracion de emergencia 1 --> eemprom por defecto , 0 --> nada
+***/
+int Swater::emergencyConfig(String command){
+
+
+    int _execute = atoi(command.c_str());
+
+    switch(_execute){
+
+            case 0 :
+                this->init(false);
+               return 0;
+            case 1:
+                 ObjSetup o = DefConfig::get_DefConf();
+                 this->set_PrimaryConf(o);
+                 this->init(false);
+                 //creamos un nuevo periodo
+                 this->set_period(o.tick);
+                 ObDefault_ = o;
+                 //eliminamos las variables en memoria
+                 this->TruncateVariables();
+                 this->InitVariables(false);
+                break;
+
+    }
+
+    return 1;
+}
+
+
 
 /***
  * algoritmo de configuracion al momento que se ejecuta el WAR
@@ -568,9 +1296,10 @@ int Swater::FirmStatus()
 int Swater::set_config(String command){
 
 
+    //Existe un maximo de 51 carcateres a capturar , limitante ...
 
 
-   sprintf(console_, " %s%s%s" , "[CONSOLE : SE EJECUTO EL COMANDO EN set_config(command)  " , ConvertoChar(command) , "]");
+   sprintf(console_, " %s%s%s" , "[C:set_config(command)" , ConvertoChar(command) , "]");
 
 
    //ConfJson
@@ -598,6 +1327,46 @@ int Swater::set_config(String command){
    }
 
 
+
+   if(cmd == "TEST_VAR"){
+         return this->TestVar(exec.c_str() , false);
+   }
+
+   if(cmd == "FORCE_VAR" ){
+
+
+       bool varInit = false ;
+       varInit = this->InitVariables(false);
+
+       switch(varInit){
+           case true :
+                return 1;
+           case false :
+                return 0;
+       }
+
+
+       return 0;
+
+   }
+
+
+   if(cmd == "DELETE_VAR"){
+
+       bool success = DeleteVariable(exec.c_str());
+
+       switch(success){
+           case true :
+                return 1;
+           case false :
+                return 0;
+       }
+
+       return 0;
+
+   }
+
+
    if(cmd == "PARTICLE")
    {
 
@@ -621,36 +1390,59 @@ int Swater::set_config(String command){
       return -1;
 
    }
-   else if(cmd == "VARIABLES")
+   else if(cmd == "VAR")
    {
-       strcpy(object.variables, exec.c_str());
-       ovewrite = true;
-       ObDefault_ = object;
+
+       char * _json = (char*) exec.c_str();
+
+       //char * _name         = this->ConfJson(_json , "n");
+       //char * _pin          = this->ConfJson(_json , "p");
+       //char * _type         = this->ConfJson(_json , "t");
+      // char * _format       = this->ConfJson(_json , "f");
+      // char * _active       = this->ConfJson(_json , "a");
+
+      //char * name , char * pin , char* type , char * format , char * active , int index
+      // bool ok = this->creatVariables(_name, _pin , _type , _format , _active);
+      this->ProgramConf(_json);
+      this->InitVariables(false);
+
    }
    else if(cmd == "VERSION"){
        object.version = atoi(exec.c_str());
        ovewrite = true;
        ObDefault_ = object;
    }
-   else if (cmd == "JSON_CONFIG"){
+   //configuracion de data tipo json
+   else if (cmd == "JCONF"){
+
 
        char * _execute = (char*) exec.c_str();
 
-       char* _version       =  this->ConfJson( _execute  ,"version");
-       char* _vars          =  this->ConfJson( _execute , "variables");
-       char* _wbase         =  this->ConfJson( _execute , "web_base");
-       char* _wservices     =  this->ConfJson( _execute , "webservices");
-       char* _activate      =  this->ConfJson( _execute , "activate");
-       char* _sleep         =  this->ConfJson( _execute , "sleep");
-       char* _tick          =  this->ConfJson( _execute , "tick");
-       char* _war           =  this->ConfJson( _execute , "war");
+       if(_execute == NULL || _execute == ""){
+           return -1;
+       }
+
+
+        char*   _version            = NULL;
+        char*   _wbase              = NULL;
+        char *  _wservices          = NULL;
+        char *  _activate           = NULL;
+        char * _sleep               = NULL;
+        char * _tick                = NULL;
+        char *  _war                = NULL;
+
+
+        _version       =  this->ConfJson( _execute  ,"version");
+        _wbase         =  this->ConfJson( _execute , "web_base");
+        _wservices     =  this->ConfJson( _execute , "webservices");
+        _activate      =  this->ConfJson( _execute , "activate");
+        _sleep         =  this->ConfJson( _execute , "sleep");
+        _tick          =  this->ConfJson( _execute , "tick");
+        _war           =  this->ConfJson( _execute , "war");
 
 
        if(_version != NULL){
             object.version = atoi(_version);
-       }
-       if(_vars != NULL && _vars != ""){
-           strcpy(object.variables, _vars);
        }
        if(_wbase  != NULL && _wbase != ""){
            strcpy(object.web_base, _wbase);
@@ -666,16 +1458,68 @@ int Swater::set_config(String command){
        }
        if(_tick != NULL && atoi(_tick) > 100 ){
           object.tick = atoi(_tick);
+          this->set_period(object.tick);
        }
        if(_war != NULL && _war != ""){
           strcpy(object.war, _war);
        }
 
 
-       ovewrite = true;
-       ObDefault_ = object;
 
-       sprintf(json_compose, "%s" ,  _version);
+      free(_version);
+      free(_wbase);
+      free(_wservices);
+      free(_activate);
+      free(_sleep);
+      free(_tick);
+      free(_war);
+
+      ObDefault_ = object;
+
+      if(test_mode){
+           this->init(false);
+      }else ovewrite = true;
+
+
+
+   }
+   else if(cmd == "CONF_RESET"){
+        this->emergencyConfig(exec);
+   }
+   else if(cmd == "STATUS"){
+
+       /***
+        * STATUS DEL SISTEMA :
+        *
+        *       VERIFICA CONFIGURACIONES MEDIANTE COMANDOS
+        *       ESTOS DEVUELVEN UN VALOR ENTERO (CODIGO)
+        *
+        *        VAR_VIRTUAL :  --verifica si las variables virtuales estan cargadas
+        *                       --OK            = 100
+        *                       --ERROR         = 101
+        *
+        *        VAR_CONF :    -- verifica si el objeto de configuracion OBJSETUP variables no esta vacio
+        *                       --OK            = 102
+        *                       --ERROR         = 103
+        *
+       ****/
+
+       if(exec  == "VAR_VIRTUAL"){
+
+            if( this->varObj[0].name == NULL)
+                return 101;
+            else
+                return 100;
+
+       }
+       else if(exec == "VAR_CONF"){
+           if(object.variables == NULL || object.variables == '\0')
+              return 103;
+            else
+              return 102;
+       }
+
+       return 999;
 
    }
 
@@ -690,6 +1534,67 @@ int Swater::set_config(String command){
 
 
 
+int Swater::TestFunction(String command){
+
+    int _execute = atoi(command.c_str());
+
+
+
+    if(_execute == 1 ){
+
+        ObjSetup obj = this->get_PrimaryConf();
+        sprintf(console_ , "%s" ,  obj.variables );
+    }
+    else if(_execute == 2){
+
+        bool r = this->InitVariables(false);
+        if(r) return 1;
+        else return 0;
+
+    }
+    else if(_execute == 3){
+
+        char * a;
+        a = NULL;
+        //a = (char*) (malloc(100 * sizeof(char)));
+
+        for(int i = 0 ; i < 3 ; i++){
+            strcat(a , varObj[i].name);
+        }
+
+        sprintf(error_ , "%s" , a);
+
+    }
+    else if (_execute == 4){
+        if( varObj[0].name == NULL)
+        return 99;
+        else return 98;
+    }
+    else if(_execute == 5){
+
+        sprintf(error_ , "%s" ,  varObj[0].name);
+        sprintf(console_ , "%s" ,  varObj[1].name);
+    }
+    else if(_execute == 6){
+
+        ObjSetup obj = this->get_PrimaryConf();
+        sprintf(error_ , "%u" , strlen(obj.variables));
+
+    }
+    else if(_execute == 7){
+
+         ObjSetup obj = this->get_PrimaryConf();
+         sprintf(console_ , "%s" , obj.variables[6]);
+
+    }
+
+
+    return 0;
+
+}
+
+
+
 /**
  * es un algoritmo de tipo asincrono que se ejecuta independientemente
  * del loop actual , este proceso dura segun la configuracion del usuario
@@ -697,11 +1602,7 @@ int Swater::set_config(String command){
  * loop y como sus timers no estan sincronizados puede obtener o establecer
  * datos no deseados.
 ***/
-void Task::task_process(void){
-
-
-
-}
+void Task::task_process(void){}
 
 
 /**
@@ -712,25 +1613,34 @@ void Task::task_process(void){
 void Swater::loop(void){
 
 
-     // codigo ejemplo .... no borrar
-     //envio de datos por medio de cloud particle ...
-     //sprintf(json_compose, "memoria eeprom  %u  numero de iteracion = %u " , memory_size , iteration );
-
-     // ObjSetup o = get_PrimaryConf();
-     // sprintf(json_compose, " eeprom lectura exitosa  %s  y T %u" ,  o.webservices, o.tick );
-
 
       //primera condicion en el loop , verificar el firmware
-      if(this->FirmStatus() == 0 )
-            return;
+      if(this->FirmStatus() == 0 ){
+           return;
+      }
 
-      //obtenemos los datos del proceso
-      String process = this->get_process();
 
-      //ejecutamos el hook del webservices
-      ExecuteHook(process);
+      String process = String("");
+
+      if(this->ExecVar){
+          process = this->get_process();
+      }
+      else{
+          process = "{\"error\": \"Variables no iniciadas o no existen\" \"id\" : \"" + System.deviceID() + "\" }";
+      }
+
+
+      //String p = String(analogRead(this->convertPIN( varObj[0].pin , 1)) );
+      ExecuteErrorHandle (process);
+
+     // EJECUCION DEL WEBSERVICES , SI ESTA COMENTADA ES POR EL SIMPLE HECHO DE HACER PRUEBAS
+      //ExecuteHook(process);
+
+     //sprintf(console_, "%s" , analogRead(this->convertPIN( varObj[0].pin , 1)) );
+     //sprintf(error_, "%u" , varObj[0].pin );
 
 }
+
 
 
 
@@ -738,31 +1648,101 @@ void Swater::loop(void){
 String Swater::get_process()
 {
 
- // char jsonString[] = "{\"query\":{\"count\":1,\"created\":\"2012-08-04T14:46:03Z\",\"lang\":\"en-US\",\"results\":{\"item\":{\"title\":\"valida de verga\"}}}}";
+        int size                    = sizeof(varObj) / sizeof(*varObj);
+        String  deviceId            = this->deviceId;
+
+
+        String Jformat = "{";
+        String data    = String("");
+        String val     = String("");
+
+        Jformat += "\"error\":\"null\"";
+        Jformat += ",";
+        Jformat += "\"data\":[";
+
+
+        int i = 0;
+
+        for(i  ; i < size ; i++){
+
+            if(varObj[i].name != NULL && varObj[i].active == true ){
 
 
 
-    ObjSetup o = this->ObDefault_ ;
-   // String s = o.webservices;
+                 sprintf(console_ , "%s" , varObj[i].name);
 
-    //return s;
 
-   // return s;
+                if(
+                        strcmp(varObj[i].type , "AI") == 0
+                    ||  strcmp(varObj[i].type , "DI") == 0
+                    ){
 
-   // return String( o.variables[2]  ) ;
+                    //condicion analogo de entrada
 
-   return String(o.version );
+                    data = String("");
+                    data = "{";
+                    data += "\"value\":\"" ;
 
- }
+                    val = "";
+                    if( strcmp(varObj[i].type , "AI") == 0 ){
+                         val = analogRead(this->convertPIN( varObj[i].pin , 1));
+                    }
+                    else if(strcmp(varObj[i].type , "DI") == 0){
+                        val = digitalRead(this->convertPIN( varObj[i].pin , 2));
+                    }
+
+                    data += val ;
+                    data += "\"";
+                    data += ",";
+                    data += "\"name\":" ;
+                    data += "\"";
+                    data += varObj[i].name;
+                    data += "\"";
+                    data += "}";
+
+                    if(i < (size-1) ){
+                        data += ",";
+                    }
+
+                    Jformat += data;
+              }
+              else if(strcmp(varObj[i].type , "AO") == 0 ){
+                  //Analogo de salida
+              }
+              else if(strcmp(varObj[i].type , "DO") == 0){
+                  //Digital de salida
+
+              }
+              else if(strcmp(varObj[i].type , "VI") == 0){
+                  //Variable Virtual
+              }
+
+
+            }
+
+
+
+
+        }
+        Jformat  += "],";
+        Jformat  += "\"id\":" ;
+        Jformat  += "\"" +  String(deviceId) ;
+        Jformat  += "\"";
+        Jformat  += "}";
+
+
+
+        return Jformat;
+
+}
 
 
 
 Swater smartwater;
 
 void setup(){
-    smartwater.set_period(50*1000);
-   // smartwater.start_task(true);
-    smartwater.start_testMode(true);
+    smartwater.set_period(20000);
+    //smartwater.start_testMode(true);
     //smartwater.start_defaultMode(true );
     smartwater.init(true) ;
 }

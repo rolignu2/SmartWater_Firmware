@@ -22,6 +22,18 @@ struct ObjSetup {
 };
 
 
+struct VarObject{
+
+    int         pin ;
+    char *      name ;
+    char *      type ;
+    bool        active;
+    char *      test;
+    char *      format;
+    bool        isconfig;
+    int         value;
+
+};
 
 
 //clase por defecto de configuracion

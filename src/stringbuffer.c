@@ -25,20 +25,24 @@
 #include <string.h>
 #include "stringbuffer.h"
 
+
 //Default buffer size for strings
 #define BUFFER_SIZE 256
 //there is a static buffer allocated, which is used to decode strings to
 //strings cannot be longer than the buffer
 char global_buffer[BUFFER_SIZE];
 
-string_buffer*
-stringBufferCreate(void)
+string_buffer* stringBufferCreate(void)
 {
-  string_buffer* result = malloc(sizeof(string_buffer));
+
+
+  string_buffer* result = (string_buffer*) malloc(sizeof(string_buffer));
+
   if (result == NULL)
-    {
+  {
       return NULL;
-    }
+  }
+
   result->string = global_buffer;
   memset((void*) global_buffer, 0, BUFFER_SIZE);
   //unused - but will be usefull after realloc got fixd
@@ -52,8 +56,7 @@ stringBufferCreate(void)
   return result;
 }
 
-char
-stringBufferAdd(char value, string_buffer* buffer)
+char stringBufferAdd(char value, string_buffer* buffer)
 {
   if (buffer->string_length >= buffer->memory)
     {
@@ -72,13 +75,12 @@ stringBufferAdd(char value, string_buffer* buffer)
       //in the meantime we just drop it
       return 0; //EOF would be a better choice - but that breaks json decoding
     }
-  buffer->string[buffer->string_length] = value;
-  buffer->string_length += 1;
-  return 0;
+     buffer->string[buffer->string_length] = value;
+     buffer->string_length += 1;
+    return 0;
 }
 
-char*
-stringBufferToString(string_buffer* buffer)
+char* stringBufferToString(string_buffer* buffer)
 {
   //this is the realloc dependent function - it does not work
   //  char* result = buffer->string;
@@ -95,7 +97,7 @@ stringBufferToString(string_buffer* buffer)
    buffer->string=NULL;
    free(buffer);
    return string;*/
-  char* result = malloc(buffer->string_length * sizeof(char));
+  char* result = (char *) malloc(buffer->string_length * sizeof(char));
   if (result == NULL)
     {
       return NULL;
@@ -106,8 +108,7 @@ stringBufferToString(string_buffer* buffer)
   return result;
 }
 
-void
-stringBufferFree(string_buffer* buffer)
+void stringBufferFree(string_buffer* buffer)
 {
   if (buffer == NULL)
     {
@@ -122,4 +123,3 @@ stringBufferFree(string_buffer* buffer)
    */
   free(buffer);
 }
-
